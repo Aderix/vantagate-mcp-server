@@ -1,6 +1,6 @@
 {
   "name": "@vantagate/mcp-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "VantaGate MCP Server & OpenAPI integration - Human-in-the-Loop for AI Agents",
   "mcpName": "io.github.Aderix/vantagate-mcp-server",
   "main": "./dist/index.js",

@@ -14,7 +14,8 @@ import { z } from "zod";
 
 const VANTA_BASE_URL = "https://api.vanta-gate.com/v1";
 const SERVER_NAME = "vantagate-mcp-server";
-const SERVER_VERSION = "1.0.0";
+const SERVER_VERSION = "1.0.1";
+const FETCH_TIMEOUT_MS = 10000; // 10 seconds hard limit for all API calls
 
 // ─── Environment validation ────────────────────────────────────────────────────
 
@@ -57,10 +58,17 @@ const CreateCheckpointArgsSchema = z.object({
     .describe("Additional context displayed below the title on the decision screen. Max 1000 chars."),
   payload: z
     .record(z.string(), z.unknown())
+    .refine((obj) => {
+      try {
+        return Buffer.byteLength(JSON.stringify(obj), 'utf8') <= 512 * 1024;
+      } catch {
+        return false;
+      }
+    }, "Payload exceeds 512KB limit. Keep your context concise.")
     .describe(
       "Arbitrary JSON object containing the full context for the approver. " +
         "Include all relevant data (amounts, IDs, user info, etc.). " +
-        "Encrypted at rest with AES-256 and permanently destroyed after the decision."
+        "Encrypted at rest with AES-256 and permanently destroyed after the decision. Max 512KB."
     ),
   options: z
     .array(z.string())
@@ -75,6 +83,7 @@ const CreateCheckpointArgsSchema = z.object({
   timeout: z
     .string()
     .regex(/^\d+[hmd]$/)
+    .max(10, "Timeout format is invalid or exceeds safe string limits.")
     .optional()
     .describe(
       "Auto-expire duration. Format: {n}m | {n}h | {n}d (e.g. '30m', '4h', '2d'). " +
@@ -158,51 +167,100 @@ async function vantaPost<T>(
   path: string,
   body: Record<string, unknown>
 ): Promise<T> {
-  const response = await fetch(`${VANTA_BASE_URL}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-API-KEY": VANTA_API_KEY,
-      "User-Agent": `${SERVER_NAME}/${SERVER_VERSION}`,
-    },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-  const json = (await response.json()) as T | VantaErrorBody;
+  try {
+    const response = await fetch(`${VANTA_BASE_URL}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-KEY": VANTA_API_KEY,
+        "User-Agent": `${SERVER_NAME}/${SERVER_VERSION}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+    
+    // Safely parse JSON in case backend returns unexpected HTML/Text on 502/503
+    let json: any = {};
+    try {
+      json = await response.json();
+    } catch {
+      /* fallback to empty object if response is not valid JSON */
+    }
 
-  if (!response.ok) {
-    const err = json as VantaErrorBody;
-    const upgradeHint =
-      err.upgrade_url ? ` Upgrade at: ${err.upgrade_url}` : "";
-    throw new McpError(
-      ErrorCode.InternalError,
-      `VantaGate API error ${response.status} [${err.error ?? "Unknown"}]: ${err.message ?? response.statusText}${upgradeHint}`
-    );
+    if (!response.ok) {
+      if (response.status >= 500) {
+        // Scrubbing: Hide internal server errors to prevent reconnaissance
+        throw new McpError(ErrorCode.InternalError, "VantaGate API error: Internal Server Error. Please try again later.");
+      }
+
+      const err = json as VantaErrorBody;
+      const upgradeHint = err.upgrade_url ? ` Upgrade at: ${err.upgrade_url}` : "";
+      throw new McpError(
+        ErrorCode.InternalError,
+        `VantaGate API error ${response.status} [${err.error ?? "Unknown"}]: ${err.message ?? response.statusText}${upgradeHint}`
+      );
+    }
+
+    return json as T;
+  } catch (error: unknown) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new McpError(ErrorCode.InternalError, "VantaGate API connection timed out. The request took too long.");
+    }
+    if (error instanceof McpError) throw error;
+    throw new McpError(ErrorCode.InternalError, `Network error: ${error instanceof Error ? error.message : String(error)}`);
   }
-
-  return json as T;
 }
 
 async function vantaGet<T>(path: string): Promise<T> {
-  const response = await fetch(`${VANTA_BASE_URL}${path}`, {
-    method: "GET",
-    headers: {
-      "X-API-KEY": VANTA_API_KEY,
-      "User-Agent": `${SERVER_NAME}/${SERVER_VERSION}`,
-    },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-  const json = (await response.json()) as T | VantaErrorBody;
+  try {
+    const response = await fetch(`${VANTA_BASE_URL}${path}`, {
+      method: "GET",
+      headers: {
+        "X-API-KEY": VANTA_API_KEY,
+        "User-Agent": `${SERVER_NAME}/${SERVER_VERSION}`,
+      },
+      signal: controller.signal,
+    });
 
-  if (!response.ok) {
-    const err = json as VantaErrorBody;
-    throw new McpError(
-      ErrorCode.InternalError,
-      `VantaGate API error ${response.status} [${err.error ?? "Unknown"}]: ${err.message ?? response.statusText}`
-    );
+    clearTimeout(timeoutId);
+
+    let json: any = {};
+    try {
+      json = await response.json();
+    } catch {
+      /* fallback */
+    }
+
+    if (!response.ok) {
+      if (response.status >= 500) {
+        throw new McpError(ErrorCode.InternalError, "VantaGate API error: Internal Server Error. Please try again later.");
+      }
+
+      const err = json as VantaErrorBody;
+      throw new McpError(
+        ErrorCode.InternalError,
+        `VantaGate API error ${response.status} [${err.error ?? "Unknown"}]: ${err.message ?? response.statusText}`
+      );
+    }
+
+    return json as T;
+  } catch (error: unknown) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new McpError(ErrorCode.InternalError, "VantaGate API connection timed out. The request took too long.");
+    }
+    if (error instanceof McpError) throw error;
+    throw new McpError(ErrorCode.InternalError, `Network error: ${error instanceof Error ? error.message : String(error)}`);
   }
-
-  return json as T;
 }
 
 // ─── Tool handlers ────────────────────────────────────────────────────────────
@@ -427,7 +485,7 @@ function buildServer(): Server {
                 type: "object",
                 additionalProperties: true,
                 description:
-                  "All relevant context as a JSON object. Include amounts, IDs, affected resources, risk assessment - everything the human needs to make an informed decision.",
+                  "All relevant context as a JSON object. Include amounts, IDs, affected resources, risk assessment - everything the human needs to make an informed decision. Max 512KB.",
               },
               options: {
                 type: "array",
@@ -515,10 +573,6 @@ function buildServer(): Server {
 
 // ─── Smithery Scanner Support ─────────────────────────────────────────────────
 
-/**
- * Export a factory function for Smithery.
- * This allows Smithery to instantiate a fresh server without side-effects (transports).
- */
 export function createSandboxServer() {
   return buildServer();
 }
@@ -540,8 +594,6 @@ async function main(): Promise<void> {
   );
 }
 
-// Only execute main() if this script is run directly from the command line
-// This prevents execution when Smithery imports this file to scan capabilities.
 if (require.main === module) {
   main().catch((error: unknown) => {
     process.stderr.write(
