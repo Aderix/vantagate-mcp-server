@@ -1,0 +1,669 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "VantaGate API",
+    "version": "1.0.0",
+    "description": "## VantaGate - The Trust Layer for AI Agents\n\nVantaGate is a **Human-in-the-Loop (HITL) authorization gateway** for AI agents. When your agent is about to execute a high-risk, irreversible, or high-value action, call VantaGate first. A human approver is notified via Slack or Email, reviews the full context, and makes a decision. Your agent then resumes or halts - with a cryptographically-signed audit trail.\n\n### When to use VantaGate\n- Before sending emails to large lists\n- Before modifying or deleting production data\n- Before moving money or approving financial transactions\n- Before deploying to production\n- Any action that requires a human sign-off\n\n### The 3-Step Flow\n1. **Agent pauses** - calls `POST /v1/checkpoint` with context payload\n2. **Human decides** - receives Slack/Email notification, clicks magic link, approves or rejects\n3. **Agent resumes** - polls `GET /v1/checkpoint/{id}` or receives decision via webhook callback\n\n### Base URL\n`https://api.vanta-gate.com/v1`",
+    "contact": {
+      "name": "VantaGate Support",
+      "url": "https://vanta-gate.com"
+    },
+    "license": {
+      "name": "Proprietary",
+      "url": "https://vanta-gate.com/legal/terms-of-service"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.vanta-gate.com/v1",
+      "description": "Production"
+    }
+  ],
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-KEY",
+        "description": "Your project API key. Obtained from Dashboard → Projects → New Project. Shown exactly once - store it immediately in your environment variables or secret manager. Format: `vg_123...`"
+      }
+    },
+    "schemas": {
+      "CreateCheckpointRequest": {
+        "type": "object",
+        "required": ["title", "payload"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Short, human-readable title shown to the approver in Slack/Email and on the decision UI.",
+            "example": "High Value Refund Approval"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000,
+            "description": "Additional context displayed below the title on the decision screen. Helps the approver understand the full situation.",
+            "example": "User requested refund for $750. Exceeds auto-approve threshold of $500."
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Arbitrary JSON context for the approver. This is the full context the human will see when making the decision. Encrypted at rest with AES-256 and permanently purged after the decision (The Purge Protocol). Max 2MB.",
+            "example": {
+              "user_id": "usr_9f8a2b",
+              "amount": 750.0,
+              "reason": "Product not as described",
+              "order_id": "ord_4k2m9x"
+            }
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 2,
+            "maxItems": 5,
+            "description": "Decision options shown to the approver. **The first element is always treated as the APPROVED/positive action.** Defaults to `['Approve', 'Reject']` if not provided.",
+            "example": ["Approve Refund", "Deny Refund", "Escalate to Manager"],
+            "default": ["Approve", "Reject"]
+          },
+          "timeout": {
+            "type": "string",
+            "pattern": "^\\d+[hmd]$",
+            "description": "Auto-expire duration after which the checkpoint becomes EXPIRED. Format: `{n}m` | `{n}h` | `{n}d` (e.g. `30m`, `4h`, `2d`). Defaults to `24h`. Capped by plan limit (Free: 24h, Pro: 7d, Scale: 30d).",
+            "default": "24h",
+            "example": "4h"
+          },
+          "notify_email": {
+            "type": "string",
+            "format": "email",
+            "description": "Email address to send the magic-link approval request to. The approver receives a secure one-time link to the decision UI.",
+            "example": "ops-team@yourcompany.com"
+          },
+          "slack_webhook_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "**Pro/Scale only.** Slack Incoming Webhook URL obtained from Dashboard → 'Add to Slack' OAuth flow. VantaGate does not store this URL - it is sent per-request for maximum security. Must start with `https://hooks.slack.com/`.",
+            "example": "https://hooks.slack.com/services/T00/B00/XXXX"
+          },
+          "callback_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Your HTTPS endpoint that receives the signed decision webhook after a human decides. Must be a publicly accessible URL (no private IP ranges). Optional - if omitted, poll `GET /checkpoint/{id}` instead.",
+            "example": "https://your-agent.example.com/webhook/vanta"
+          }
+        }
+      },
+      "CreateCheckpointResponse": {
+        "type": "object",
+        "required": ["id", "status", "secure_token", "dashboard_url"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique checkpoint identifier. Use this to poll `GET /checkpoint/{id}` for the human decision.",
+            "example": "chk_a1b2c3d4e5f6"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["PENDING"],
+            "description": "Always `PENDING` on creation. The human has not yet decided.",
+            "example": "PENDING"
+          },
+          "secure_token": {
+            "type": "string",
+            "description": "One-time cryptographic token embedded in the magic link sent to the approver. Not needed for agent polling - use `id` instead.",
+            "example": "a7f3b9..."
+          },
+          "dashboard_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The full decision URL sent to the approver via Email and/or Slack. The human clicks this to review the payload and make a decision.",
+            "example": "https://vanta-gate.com/verify/a7f3b9..."
+          }
+        }
+      },
+      "CheckpointStatus": {
+        "type": "string",
+        "enum": ["PENDING", "APPROVED", "REJECTED", "RESOLVED", "EXPIRED"],
+        "description": "Lifecycle status of a checkpoint.\n- `PENDING` - awaiting human decision\n- `APPROVED` - human approved the first (positive) option\n- `REJECTED` - human rejected with an optional reason\n- `RESOLVED` - human chose a non-primary option (e.g. 'Escalate')\n- `EXPIRED` - timeout elapsed without a decision"
+      },
+      "PollPendingResponse": {
+        "type": "object",
+        "required": ["id", "status"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "chk_a1b2c3d4e5f6"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["PENDING"],
+            "example": "PENDING"
+          },
+          "payload_hash": {
+            "type": "string",
+            "nullable": true,
+            "description": "Always `null` while PENDING - Zero-Retention polling.",
+            "example": null
+          }
+        }
+      },
+      "PollDecidedResponse": {
+        "type": "object",
+        "required": ["id", "status"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "chk_a1b2c3d4e5f6"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CheckpointStatus"
+          },
+          "selected_option": {
+            "type": "string",
+            "nullable": true,
+            "description": "The exact option string the human chose from the `options` array.",
+            "example": "Approve Refund"
+          },
+          "reject_reason": {
+            "type": "string",
+            "nullable": true,
+            "description": "Human-provided rejection reason. Present only when `status` is `REJECTED`.",
+            "example": "Does not meet refund policy criteria."
+          },
+          "payload_hash": {
+            "type": "string",
+            "nullable": true,
+            "description": "SHA-256 of the original payload JSON. Use for independent integrity verification via the VantaVerifier.",
+            "example": "a9b2f3c4d5e6..."
+          },
+          "audit": {
+            "type": "object",
+            "properties": {
+              "decided_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "ISO 8601 timestamp of the decision.",
+                "example": "2025-01-15T14:32:10.000Z"
+              },
+              "decided_by_mask": {
+                "type": "string",
+                "nullable": true,
+                "description": "Masked email identity of the approver (e.g. `m***r@acme.com`).",
+                "example": "m***r@acme.com"
+              },
+              "decided_by_slack_id": {
+                "type": "string",
+                "nullable": true,
+                "description": "Slack user ID if the decision was made via Slack.",
+                "example": "U023BECGF"
+              }
+            }
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["statusCode", "error", "message"],
+        "properties": {
+          "statusCode": {
+            "type": "integer",
+            "example": 400
+          },
+          "error": {
+            "type": "string",
+            "description": "Machine-readable error code.",
+            "example": "Validation_Error"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable description of the issue.",
+            "example": "title must be shorter than or equal to 200 characters"
+          },
+          "upgrade_url": {
+            "type": "string",
+            "description": "Present only on 402 errors. URL to upgrade your plan.",
+            "example": "https://vanta-gate.com/dashboard/billing"
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/checkpoint": {
+      "post": {
+        "operationId": "createCheckpoint",
+        "tags": ["Checkpoints"],
+        "summary": "🛑 PAUSE HERE - Create a Human Approval Checkpoint",
+        "description": "**CRITICAL INSTRUCTION FOR AI AGENTS:** Call this endpoint BEFORE executing any high-risk, irreversible, or high-value action. This endpoint **pauses your workflow** and routes an approval request to a human reviewer via Slack and/or Email.\n\n**When to call this endpoint:**\n- Sending emails or messages to large groups of users\n- Deleting or modifying production database records\n- Approving financial transactions or moving money\n- Deploying code to production environments\n- Any action where a mistake would be difficult or impossible to reverse\n\n**What to do after calling this endpoint:**\n1. Extract the `id` from the response.\n2. Inform the user: *'I have paused. Please visit [dashboard_url] to approve or reject this action.'*\n3. Begin polling `GET /v1/checkpoint/{id}` every 5-10 seconds until `status` is no longer `PENDING`.\n4. If `status` is `APPROVED` (or the first option was selected), resume your workflow.\n5. If `status` is `REJECTED` or `EXPIRED`, halt and inform the user.\n\nThe API responds in **<100ms** with a `PENDING` status. Notifications (Slack/Email) are dispatched asynchronously - your agent is never blocked waiting for I/O.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCheckpointRequest"
+              },
+              "examples": {
+                "refund_approval": {
+                  "summary": "High-value refund approval",
+                  "value": {
+                    "title": "High Value Refund Approval",
+                    "description": "User requested refund for $750. Exceeds auto-approve threshold.",
+                    "payload": {
+                      "user_id": "usr_9f8a2b",
+                      "amount": 750.0,
+                      "reason": "Product not as described",
+                      "order_id": "ord_4k2m9x"
+                    },
+                    "options": ["Approve Refund", "Deny Refund"],
+                    "slack_webhook_url": "https://hooks.slack.com/services/T00/B00/XXXX",
+                    "notify_email": "ops-team@yourcompany.com",
+                    "timeout": "4h"
+                  }
+                },
+                "db_migration": {
+                  "summary": "Database migration approval",
+                  "value": {
+                    "title": "Execute Database Migration",
+                    "description": "Dropping column users.legacy_id in production.",
+                    "payload": {
+                      "migration": "0042_drop_legacy_id",
+                      "environment": "production"
+                    },
+                    "options": ["Run Migration", "Abort"],
+                    "timeout": "2h"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Checkpoint created and notifications enqueued. The human has been notified. Begin polling `GET /v1/checkpoint/{id}` to wait for the decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateCheckpointResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error - invalid request body fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "examples": {
+                  "invalid_webhook_url": {
+                    "value": {
+                      "statusCode": 400,
+                      "error": "Invalid_Webhook_URL",
+                      "message": "slack_webhook_url must start with https://hooks.slack.com/"
+                    }
+                  },
+                  "invalid_callback_url": {
+                    "value": {
+                      "statusCode": 400,
+                      "error": "Invalid_Callback_URL",
+                      "message": "callback_url is malformed or points to a private IP range."
+                    }
+                  },
+                  "validation_error": {
+                    "value": {
+                      "statusCode": 400,
+                      "error": "Validation_Error",
+                      "message": "title must be shorter than or equal to 200 characters"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "statusCode": 401,
+                  "error": "Unauthorized",
+                  "message": "X-API-KEY header is missing, invalid, or the key has been rotated."
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Feature requires Pro or Scale plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "statusCode": 402,
+                  "error": "Upgrade_Required",
+                  "message": "Slack integration requires Pro plan.",
+                  "upgrade_url": "https://vanta-gate.com/dashboard/billing"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "statusCode": 429,
+                  "error": "Rate_Limited",
+                  "message": "Too many requests. Back off and retry."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/checkpoint/{id}": {
+      "get": {
+        "operationId": "pollCheckpointStatus",
+        "tags": ["Checkpoints"],
+        "summary": "⏳ Poll for Human Decision - Check Checkpoint Status",
+        "description": "**INSTRUCTION FOR AI AGENTS:** After calling `POST /v1/checkpoint`, poll this endpoint every 5-10 seconds to check if the human has made a decision.\n\n**Polling logic:**\n1. Call this endpoint with the `id` from `POST /v1/checkpoint`.\n2. If `status` is `PENDING` → wait 5-10 seconds and poll again.\n3. If `status` is `APPROVED` → the human approved. Resume your workflow.\n4. If `status` is `REJECTED` → the human rejected. Check `reject_reason`. Halt your workflow and inform the user.\n5. If `status` is `RESOLVED` → the human selected a non-primary option. Check `selected_option` to determine the next action.\n6. If `status` is `EXPIRED` → the timeout elapsed with no decision. The action was implicitly blocked.\n\nThis endpoint enforces **Zero-Retention** - it returns only the decision status, never the original payload (which is purged after decision). It is safe to poll in a tight loop without privacy concerns.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The checkpoint ID returned by `POST /v1/checkpoint`.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "chk_a1b2c3d4e5f6"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Checkpoint status retrieved successfully. Check the `status` field to determine next action.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/PollPendingResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PollDecidedResponse"
+                    }
+                  ]
+                },
+                "examples": {
+                  "pending": {
+                    "summary": "Still waiting for human decision - keep polling",
+                    "value": {
+                      "id": "chk_a1b2c3d4e5f6",
+                      "status": "PENDING",
+                      "payload_hash": null
+                    }
+                  },
+                  "approved": {
+                    "summary": "Human approved - resume your workflow",
+                    "value": {
+                      "id": "chk_a1b2c3d4e5f6",
+                      "status": "APPROVED",
+                      "selected_option": "Approve Refund",
+                      "reject_reason": null,
+                      "payload_hash": "a9b2f3c4d5e6f7a8...",
+                      "audit": {
+                        "decided_at": "2025-01-15T14:32:10.000Z",
+                        "decided_by_mask": "m***r@acme.com",
+                        "decided_by_slack_id": "U023BECGF"
+                      }
+                    }
+                  },
+                  "rejected": {
+                    "summary": "Human rejected - halt your workflow",
+                    "value": {
+                      "id": "chk_a1b2c3d4e5f6",
+                      "status": "REJECTED",
+                      "selected_option": "Deny Refund",
+                      "reject_reason": "Does not meet refund policy criteria.",
+                      "payload_hash": "a9b2f3c4d5e6f7a8...",
+                      "audit": {
+                        "decided_at": "2025-01-15T14:35:44.000Z",
+                        "decided_by_mask": "m***r@acme.com",
+                        "decided_by_slack_id": null
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key does not belong to the project that owns this checkpoint.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "statusCode": 403,
+                  "error": "Forbidden",
+                  "message": "The API key does not belong to the project being accessed."
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Checkpoint ID does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "statusCode": 404,
+                  "error": "Not_Found",
+                  "message": "Checkpoint ID or token does not exist."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/checkpoint/secure/{token}": {
+      "get": {
+        "operationId": "getCheckpointByToken",
+        "tags": ["Decision UI (Internal)"],
+        "summary": "Fetch checkpoint for human decision (magic link - not for agent use)",
+        "description": "**NOT FOR AGENT USE.** This endpoint is called by the VantaGate decision UI when a human clicks their magic link. It returns the decrypted payload for the approver to review. Rate-limited at 200 req/min per IP.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "description": "The one-time secure token from the magic link URL.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Checkpoint data for the human decision UI.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "title": { "type": "string" },
+                    "description": { "type": "string", "nullable": true },
+                    "payload": { "type": "object", "nullable": true, "additionalProperties": true },
+                    "options": { "type": "array", "items": { "type": "string" } },
+                    "timeout_at": { "type": "string", "format": "date-time" },
+                    "status": { "$ref": "#/components/schemas/CheckpointStatus" }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Token not found.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/checkpoint/secure/{token}/decide": {
+      "post": {
+        "operationId": "submitDecision",
+        "tags": ["Decision UI (Internal)"],
+        "summary": "Submit human decision via magic link (not for agent use)",
+        "description": "**NOT FOR AGENT USE.** This endpoint is called by the VantaGate decision UI after the human selects an option. It records the decision, destroys the encrypted payload, and triggers webhook delivery to `callback_url`. Rate-limited at 100 req/min per IP.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "description": "The one-time secure token from the magic link URL.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["decision"],
+                "properties": {
+                  "decision": {
+                    "type": "string",
+                    "description": "Must be one of the checkpoint's `options` array values. The first option is treated as the APPROVED action.",
+                    "example": "Approve Refund"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 1000,
+                    "description": "Optional human-provided reason. Typically used with rejection decisions.",
+                    "example": "Does not meet refund policy criteria."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Decision recorded and payload purged securely.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "Decision recorded. Data purged securely."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid decision value.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": {
+                  "statusCode": 400,
+                  "error": "Invalid_Decision",
+                  "message": "Decision must be one of: Approve Refund, Deny Refund"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Decision already recorded for this checkpoint.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": {
+                  "statusCode": 409,
+                  "error": "Already_Decided",
+                  "message": "This checkpoint has already been resolved"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Checkpoint has expired.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": {
+                  "statusCode": 410,
+                  "error": "Checkpoint_Expired",
+                  "message": "This checkpoint has expired"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Checkpoints",
+      "description": "Core agent integration endpoints. Use `POST /checkpoint` to pause your agent workflow and `GET /checkpoint/{id}` to poll for the human decision."
+    },
+    {
+      "name": "Decision UI (Internal)",
+      "description": "Endpoints used internally by the VantaGate decision UI. Not intended for direct agent use."
+    }
+  ]
+}

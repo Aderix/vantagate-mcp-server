@@ -1,0 +1,45 @@
+{
+  "name": "@vantagate/mcp-server",
+  "version": "1.0.0",
+  "description": "VantaGate MCP Server & OpenAPI integration - Human-in-the-Loop for AI Agents",
+  "mcpName": "io.github.Aderix/vantagate-mcp-server",
+  "main": "./dist/index.js",
+  "bin": {
+    "vantagate-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node ./dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "vantagate",
+    "human-in-the-loop",
+    "ai-agent",
+    "openapi"
+  ],
+  "author": "VantaGate",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "files": [
+    "dist",
+    "vanta-gate-openapi.json",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Aderix/vantagate-mcp-server"
+  }
+}

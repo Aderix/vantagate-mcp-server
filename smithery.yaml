@@ -1,0 +1,11 @@
+startCommand:
+  type: stdio
+  command: npx
+  args:
+    - -y
+    - "@vantagate/mcp-server"
+  env:
+    VANTA_API_KEY:
+      type: string
+      description: "Your VantaGate API Key (Format: vg_123...). Obtain from creating project at https://vanta-gate.com/dashboard/projects"
+      required: true
