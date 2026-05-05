@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "VantaGate API",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "description": "## VantaGate - The Trust Layer for AI Agents\n\nVantaGate is a **Human-in-the-Loop (HITL) authorization gateway** for AI agents. When your agent is about to execute a high-risk, irreversible, or high-value action, call VantaGate first. A human approver is notified via Slack or Email, reviews the full context, and makes a decision. Your agent then resumes or halts - with a cryptographically-signed audit trail.\n\n### When to use VantaGate\n- Before sending emails to large lists\n- Before modifying or deleting production data\n- Before moving money or approving financial transactions\n- Before deploying to production\n- Any action that requires a human sign-off\n\n### The 3-Step Flow\n1. **Agent pauses** - calls `POST /v1/checkpoint` with context payload\n2. **Human decides** - receives Slack/Email notification, clicks magic link, approves or rejects\n3. **Agent resumes** - polls `GET /v1/checkpoint/{id}` or receives decision via webhook callback\n\n### Base URL\n`https://api.vanta-gate.com/v1`",
     "contact": {
       "name": "VantaGate Support",
@@ -101,7 +101,7 @@
       },
       "CreateCheckpointResponse": {
         "type": "object",
-        "required": ["id", "status", "secure_token", "dashboard_url"],
+        "required": ["id", "status"],
         "properties": {
           "id": {
             "type": "string",
@@ -113,17 +113,6 @@
             "enum": ["PENDING"],
             "description": "Always `PENDING` on creation. The human has not yet decided.",
             "example": "PENDING"
-          },
-          "secure_token": {
-            "type": "string",
-            "description": "One-time cryptographic token embedded in the magic link sent to the approver. Not needed for agent polling - use `id` instead.",
-            "example": "a7f3b9..."
-          },
-          "dashboard_url": {
-            "type": "string",
-            "format": "uri",
-            "description": "The full decision URL sent to the approver via Email and/or Slack. The human clicks this to review the payload and make a decision.",
-            "example": "https://vanta-gate.com/verify/a7f3b9..."
           }
         }
       },
@@ -240,7 +229,7 @@
         "operationId": "createCheckpoint",
         "tags": ["Checkpoints"],
         "summary": "🛑 PAUSE HERE - Create a Human Approval Checkpoint",
-        "description": "**CRITICAL INSTRUCTION FOR AI AGENTS:** Call this endpoint BEFORE executing any high-risk, irreversible, or high-value action. This endpoint **pauses your workflow** and routes an approval request to a human reviewer via Slack and/or Email.\n\n**When to call this endpoint:**\n- Sending emails or messages to large groups of users\n- Deleting or modifying production database records\n- Approving financial transactions or moving money\n- Deploying code to production environments\n- Any action where a mistake would be difficult or impossible to reverse\n\n**What to do after calling this endpoint:**\n1. Extract the `id` from the response.\n2. Inform the user: *'I have paused. Please visit [dashboard_url] to approve or reject this action.'*\n3. Begin polling `GET /v1/checkpoint/{id}` every 5-10 seconds until `status` is no longer `PENDING`.\n4. If `status` is `APPROVED` (or the first option was selected), resume your workflow.\n5. If `status` is `REJECTED` or `EXPIRED`, halt and inform the user.\n\nThe API responds in **<100ms** with a `PENDING` status. Notifications (Slack/Email) are dispatched asynchronously - your agent is never blocked waiting for I/O.",
+        "description": "**CRITICAL INSTRUCTION FOR AI AGENTS:** Call this endpoint BEFORE executing any high-risk, irreversible, or high-value action. This endpoint **pauses your workflow** and routes an approval request to a human reviewer via Slack and/or Email.\n\n**When to call this endpoint:**\n- Sending emails or messages to large groups of users\n- Deleting or modifying production database records\n- Approving financial transactions or moving money\n- Deploying code to production environments\n- Any action where a mistake would be difficult or impossible to reverse\n\n**What to do after calling this endpoint:**\n1. Extract the `id` from the response.\n2. Inform the user: *'I have paused. Please visit your email or slack to approve or reject this action.'*\n3. Begin polling `GET /v1/checkpoint/{id}` every 5-10 seconds until `status` is no longer `PENDING`.\n4. If `status` is `APPROVED` (or the first option was selected), resume your workflow.\n5. If `status` is `REJECTED` or `EXPIRED`, halt and inform the user.\n\nThe API responds in **<100ms** with a `PENDING` status. Notifications (Slack/Email) are dispatched asynchronously - your agent is never blocked waiting for I/O.",
         "security": [
           {
             "ApiKeyAuth": []

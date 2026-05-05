@@ -6,12 +6,12 @@
     "url": "https://github.com/Aderix/vantagate-mcp-server",
     "source": "github"
   },
-  "version": "1.0.1",
+  "version": "1.0.2",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@vantagate/mcp-server",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "transport": {
         "type": "stdio"
       },

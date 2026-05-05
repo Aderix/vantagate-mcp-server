@@ -14,7 +14,7 @@ import { z } from "zod";
 
 const VANTA_BASE_URL = "https://api.vanta-gate.com/v1";
 const SERVER_NAME = "vantagate-mcp-server";
-const SERVER_VERSION = "1.0.1";
+const SERVER_VERSION = "1.0.2";
 const FETCH_TIMEOUT_MS = 10000; // 10 seconds hard limit for all API calls
 
 // ─── Environment validation ────────────────────────────────────────────────────
@@ -127,8 +127,6 @@ type CheckStatusArgs = z.infer<typeof CheckStatusArgsSchema>;
 interface CreateCheckpointResponse {
   id: string;
   status: "PENDING";
-  secure_token: string;
-  dashboard_url: string;
 }
 
 type CheckpointStatus = "PENDING" | "APPROVED" | "REJECTED" | "RESOLVED" | "EXPIRED";
@@ -304,16 +302,14 @@ async function handleCreateCheckpoint(
     "",
     `📋 Checkpoint ID : ${result.id}`,
     `📊 Status        : ${result.status}`,
-    `🔗 Decision URL  : ${result.dashboard_url}`,
     "",
     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     "⏭️  NEXT STEPS FOR AGENT:",
     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     "",
     "1. Inform the user:",
-    `   "I have paused this action for human approval. Please visit:`,
-    `   ${result.dashboard_url}`,
-    `   to review and decide."`,
+    `   "I have paused this action for human approval. Please check your`,
+    `   email or Slack for the approval notification."`,
     "",
     "2. Call check_vantagate_status with:",
     `   checkpoint_id: "${result.id}"`,
@@ -459,9 +455,9 @@ function buildServer(): Server {
             "This tool will:\n" +
             "  1. Freeze your workflow and create a secure approval checkpoint\n" +
             "  2. Notify a human reviewer via Slack and/or Email with the full context\n" +
-            "  3. Return a checkpoint_id and dashboard_url\n\n" +
+            "  3. Return a checkpoint_id for polling\n\n" +
             "After calling this tool:\n" +
-            "  → Inform the user to visit the dashboard_url to approve or reject\n" +
+            "  → Inform the user to check their email or Slack for approval notification\n" +
             "  → Call check_vantagate_status every 5-10s until status ≠ PENDING\n" +
             "  → Only proceed if status is APPROVED\n\n" +
             "Never skip this tool for high-risk actions. Human oversight is required.",

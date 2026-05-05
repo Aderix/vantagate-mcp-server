@@ -17,7 +17,7 @@ Agent hits risky action
         ↓
 POST /v1/checkpoint  ──→  Human receives Slack/Email notification
         ↓                          ↓
-   id + dashboard_url    Human reviews payload & decides
+   id and status              Human reviews payload & decides
         ↓                          ↓
 Poll GET /v1/checkpoint/{id}  ←──  Decision recorded + payload purged
         ↓
@@ -88,7 +88,7 @@ Open your `claude_desktop_config.json`:
 
 > *"Delete all records from the staging database where created_at < 2024-01-01"*
 
-Claude will automatically pause, create a checkpoint, and tell you to visit the `dashboard_url` to approve or reject.
+Claude will automatically pause, create a checkpoint, and tell you to check your email or Slack for the approval notification.
 
 ---
 
@@ -151,7 +151,7 @@ Pauses the agent workflow and routes a human approval request.
 | `slack_webhook_url` | string | ❌ | Slack webhook URL (Pro/Scale plans). From Dashboard → Add to Slack. |
 | `callback_url` | string | ❌ | Your HTTPS endpoint for signed decision webhook. |
 
-**Returns:** `checkpoint_id`, `dashboard_url`, and step-by-step instructions for the agent.
+**Returns:** `checkpoint_id` and step-by-step instructions for the agent.
 
 ### `check_vantagate_status`
 
